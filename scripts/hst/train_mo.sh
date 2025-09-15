@@ -18,7 +18,7 @@ run_experiment() {
 
     export PYTHONPATH="."
     export LD_LIBRARY_PATH="$(which python | sed 's/\/bin\/python//g')/lib"
-    DATADIR=$1
+    DATADIR=assets/dexycb_isaacgym
     
     CMD="CUDA_VISIBLE_DEVICES=$GPU python scripts/train_tracker.py \
         num_envs=5 \

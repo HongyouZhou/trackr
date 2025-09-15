@@ -1,5 +1,5 @@
-export PYTHONPATH="."
-export LD_LIBRARY_PATH="$(which python | sed 's/\/bin\/python//g')/lib"
+export PYTHONPATH=".:/ssdArray/hongyou/dev/isaacgym/python"
+export LD_LIBRARY_PATH="$(which python | sed 's/\/bin\/python//g')/lib:/home/hongyou/miniforge3/envs/unitree-rl/lib"
 echo $LD_LIBRARY_PATH
 PCKPT=checkpoints/track_predn.pt
 CHECKPOINT=$1
@@ -7,7 +7,7 @@ CL=8
 HIDDEN_DIM=512
 N_LAYER=6
 N_HEAD=8
-cmd="python scripts/distmatch_mlp.py num_gpus=1  \
+cmd="python scripts/distmatch.py num_gpus=1  \
     task=ShadowHandGrasping \
     checkpoint=$CHECKPOINT  \
     task.env.input_priv=False \

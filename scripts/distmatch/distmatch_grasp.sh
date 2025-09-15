@@ -1,5 +1,5 @@
-export PYTHONPATH="."
-export LD_LIBRARY_PATH="$(which python | sed 's/\/bin\/python//g')/lib"
+export PYTHONPATH=".:/ssdArray/hongyou/dev/isaacgym/python"
+export LD_LIBRARY_PATH="$(which python | sed 's/\/bin\/python//g')/lib:/home/hongyou/miniforge3/envs/unitree-rl/lib"
 echo $LD_LIBRARY_PATH
 CL=8
 CHECKPOINT="checkpoints/track_predn.pt"

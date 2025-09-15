@@ -1,5 +1,5 @@
-export PYTHONPATH="."
-export LD_LIBRARY_PATH="$(which python | sed 's/\/bin\/python//g')/lib"
+export PYTHONPATH=".:/ssdArray/hongyou/dev/isaacgym/python"
+export LD_LIBRARY_PATH="$(which python | sed 's/\/bin\/python//g')/lib:/home/hongyou/miniforge3/envs/unitree-rl/lib"
 echo $LD_LIBRARY_PATH
 PCKPT=checkpoints/track_predn.pt
 CHECKPOINT=$1
@@ -11,7 +11,7 @@ cmd="python scripts/viz_policy.py num_gpus=1 viser=True \
     task=AllegroXarmNew train=AllegroXarmNewPPO_mlp \
     test=True headless=True \
     checkpoint=$CHECKPOINT \
-    task.env.input_priv=True \
+    task.env.input_priv=False \
     pc_input=True \
     task.env.enableDebugVis=True \
     graphics_device_id=3 \

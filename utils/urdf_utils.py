@@ -49,8 +49,18 @@ def load_asset_files_ycb(asset_root,folder_name='ycb_real_inertia'):
                 dir  = root[len(asset_root)+1:]
                 asset_files[obj_name]={}    
                 asset_files[obj_name]['urdf']=os.path.join(dir, file)
-                asset_files[obj_name]['mesh']=os.path.join(dir, file.split('.')[0]+'/google_16k/textured.obj')
-                assert os.path.exists(os.path.join(asset_root,asset_files[obj_name]['mesh']))
+                
+                # Try textured.obj first, then textured_vhacd.obj as fallback
+                mesh_path = os.path.join(dir, file.split('.')[0]+'/google_16k/textured.obj')
+                mesh_full_path = os.path.join(asset_root, mesh_path)
+                
+                if not os.path.exists(mesh_full_path):
+                    # Try textured_vhacd.obj as fallback
+                    mesh_path = os.path.join(dir, file.split('.')[0]+'/google_16k/textured_vhacd.obj')
+                    mesh_full_path = os.path.join(asset_root, mesh_path)
+                
+                asset_files[obj_name]['mesh'] = mesh_path
+                assert os.path.exists(mesh_full_path), f"Mesh file not found: {mesh_full_path}"
                 assert os.path.exists(os.path.join(asset_root,asset_files[obj_name]['urdf']))
                     
     return asset_files

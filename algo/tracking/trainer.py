@@ -184,7 +184,12 @@ class HumanTrainer(Trainer):
 
     def train_step(self, batch):
 
-        proprio, depth, timesteps, labels, attention_mask = batch
+        # Extract data from batch dictionary
+        proprio = batch["hand_kpts"]  # Map hand_kpts to proprio
+        depth = batch["object_pc"]    # Map object_pc to depth
+        timesteps = batch["timesteps"]
+        labels = batch["labels"]
+        attention_mask = batch["attention_mask"]
 
         proprio_target = torch.clone(proprio[:, 1:])
 
@@ -202,9 +207,11 @@ class HumanTrainer(Trainer):
         pred_dict, _ = self.model.forward(
             proprio,
             depth,
+            batch["object_ids"],
             labels,
             timesteps,
             attention_mask,
+            batch["object_mask"],
         )
 
         next_proprio_preds = pred_dict["next_proprio"]
