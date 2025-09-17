@@ -31,6 +31,11 @@ model:
   diffusion_policy_horizon: None
   cache_all: False
   scale_action: True #these settings are for the working PolicyTransformer model
+  # Flow Matching parameters
+  num_inference_steps: 50
+  time_sampling_strategy: uniform
+  # Stability
+  max_velocity_magnitude: 10.0  # e.g., 10.0 to cap predicted speed
 test: False
 wandb_activate: False
 checkpoint: ''
@@ -54,8 +59,8 @@ training:
   noise_hand: 0.1
   add_data_driven_noise: False
   weight_decay: 0.01
-  log_freq: 3000
-  model_save_freq: 1000
+  log_freq: 500
+  model_save_freq: 100
   time_shift: 0
   model_save_dir: algo/pretrained/models
   root_dir: retarget_data/train

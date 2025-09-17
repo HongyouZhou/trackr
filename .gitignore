@@ -3,3 +3,5 @@ assets/
 **/__pycache__/
 wandb/
 outputs/
+*.pkl
+algo/pretrained/models/
