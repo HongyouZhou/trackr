@@ -12,7 +12,6 @@ from utils.reformat import omegaconf_to_dict
 from utils.utils import set_np_formatting, set_seed
 from utils.logger import Logger
 
-# Import Flow Matching components
 from algo.tracking.flow_matching_human_model import FlowMatchingHumanModel, FlowMatchingTrainer
 from algo.tracking.human_dataset import HumanDataset, collate_fn
 
@@ -151,6 +150,7 @@ def main(config: DictConfig):
             )
 
         # Setup optimizer and loss function
+        # TODO: add scheduler
         scheduler = None
         optimizer = AdamW(
             model.parameters(),
@@ -158,9 +158,6 @@ def main(config: DictConfig):
             weight_decay=config.pretrain.training.weight_decay,
         )
         
-        # Use Flow Matching specific loss
-        loss_fn = torch.nn.L1Loss()  # Can be replaced with FlowMatchingLoss
-
         # Create Flow Matching trainer
         trainer = FlowMatchingTrainer(
             model=model,

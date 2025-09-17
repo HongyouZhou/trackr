@@ -112,12 +112,12 @@ class FlowMatchingHumanModel(nn.Module):
         context_features = self.context_encoder(fused_features, attention_mask)
         
         # Flow Matching prediction
-        # 使用整个序列的信息作为条件，而不是只使用最后一个时间步
+        # use the entire sequence information as conditioning, not just the last time step
         conditioning = context_features.mean(dim=1)  # (batch_size, hidden_size)
-        # 或者使用最后一个时间步: conditioning = context_features[:, -1] ?
+        # or use the last time step: conditioning = context_features[:, -1] ?
         
-        # 在训练时，只返回条件信息，不进行预测
-        # 在推理时，使用Flow Matching生成预测
+        # In training, only return conditioning information, no prediction
+        # In inference, use Flow Matching to generate predictions
         if self.training:
             pred_dict = {"conditioning": conditioning}
         else:
@@ -160,7 +160,7 @@ class FlowMatchingNetwork(nn.Module):
         
         # Trunk network (state + conditioning + time embedding -> hidden)
         trunk_layers = []
-        # 输入拼接: [x_t (output_dim), conditioning (input_dim), t_embed (hidden_dim//2)]
+        # input concatenation: [x_t (output_dim), conditioning (input_dim), t_embed (hidden_dim//2)]
         self.input_concat_dim = input_dim + output_dim + hidden_dim // 2
         self.input_norm = nn.LayerNorm(self.input_concat_dim)
         trunk_layers.append(nn.Linear(self.input_concat_dim, hidden_dim))
@@ -324,16 +324,12 @@ class FlowMatchingLoss(nn.Module):
         self.sigma = sigma
         
     def forward(self, predicted_velocity, target_velocity, t):
-        """
-        Compute Flow Matching loss
-        """
         # Simple L2 loss for now
-        # In practice, you might want to use more sophisticated loss functions
+        # TODO: more sophisticated loss functions
         loss = F.mse_loss(predicted_velocity, target_velocity)
         return loss
 
 
-# Training wrapper
 class FlowMatchingTrainer:
     """
     Training wrapper for Flow Matching Human Model
@@ -369,7 +365,6 @@ class FlowMatchingTrainer:
             u = torch.rand(batch_size, 1, device=device)
             return torch.exp(u * torch.log(torch.tensor(1e-4, device=device))) * (1 - 1e-4) + 1e-4
         else:
-            # Default to uniform
             return torch.rand(batch_size, 1, device=device)
         
     def train_step(self, batch):
@@ -387,7 +382,7 @@ class FlowMatchingTrainer:
         proprio_input = proprio[:, :-1]
         object_pc_input = object_pc[:, :-1]
         
-        # 准备Flow Matching训练数据
+        # Prepare training data
         batch_size = proprio_input.shape[0]
         device = proprio_input.device
         
@@ -403,7 +398,7 @@ class FlowMatchingTrainer:
         # Remove explicit clamping, keep NaN/Inf sanitization only
         x_1 = torch.nan_to_num(x_1, nan=0.0, posinf=0.0, neginf=0.0)
         
-        # 线性插值：x_t = (1-t) * x_0 + t * x_1（用于对任意中间状态的监督）
+        # 线性插值：x_t = (1-t) * x_0 + t * x_1
         x_t = (1.0 - t) * x_0 + t * x_1
         x_t = torch.nan_to_num(x_t, nan=0.0, posinf=0.0, neginf=0.0)
         
@@ -423,11 +418,10 @@ class FlowMatchingTrainer:
             batch["object_mask"],
         )
         
-        conditioning = pred_dict["conditioning"]  # 需要从模型中获取条件
+        conditioning = pred_dict["conditioning"]  
         predicted_velocity = self.model.flow_net(x_t, conditioning, t)
         predicted_velocity = torch.nan_to_num(predicted_velocity, nan=0.0, posinf=0.0, neginf=0.0)
         
-        # 计算Flow Matching损失
         loss = F.mse_loss(predicted_velocity, target_velocity)
         if torch.isnan(loss) or torch.isinf(loss):
             # Skip this batch to avoid poisoning the optimizer state
@@ -441,11 +435,10 @@ class FlowMatchingTrainer:
         # Backward pass
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        # Gradient clipping for stability
+
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
         self.optimizer.step()
         
-        # Diagnostics
         vel_norm = predicted_velocity.norm(dim=-1).mean().detach().cpu().item()
         cond_norm = conditioning.norm(dim=-1).mean().detach().cpu().item()
         xt_norm = x_t.norm(dim=-1).mean().detach().cpu().item()

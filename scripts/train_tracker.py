@@ -5,6 +5,7 @@ from termcolor import cprint
 import wandb
 from torch.optim import AdamW
 import wandb
+from tasks import isaacgym_task_map
 from algo.tracking.trainer import HumanTrainer
 from algo.tracking.human_model import HumanModel
 from algo.tracking.human_dataset import HumanDataset, collate_fn
