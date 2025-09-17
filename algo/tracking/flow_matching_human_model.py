@@ -411,7 +411,6 @@ class FlowMatchingTrainer:
         target_velocity = x_1 - x_0
         
         # 获取条件信息
-        # Sanitize model inputs
         proprio_input = torch.nan_to_num(proprio_input, nan=0.0, posinf=0.0, neginf=0.0)
         object_pc_input = torch.nan_to_num(object_pc_input, nan=0.0, posinf=0.0, neginf=0.0)
         pred_dict, _ = self.model.forward(
@@ -424,7 +423,6 @@ class FlowMatchingTrainer:
             batch["object_mask"],
         )
         
-        # 使用Flow Matching网络预测速度场
         conditioning = pred_dict["conditioning"]  # 需要从模型中获取条件
         predicted_velocity = self.model.flow_net(x_t, conditioning, t)
         predicted_velocity = torch.nan_to_num(predicted_velocity, nan=0.0, posinf=0.0, neginf=0.0)
