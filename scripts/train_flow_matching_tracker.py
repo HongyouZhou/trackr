@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
 from termcolor import cprint
@@ -101,13 +102,30 @@ def main(config: DictConfig):
         else:
             wandb_logger = None
 
-        # Load dataset (same as original)
+        # Load datasets with subject-wise split
         train_dataset = HumanDataset(
-            cfg=config, root=config.pretrain.training.root_dir
+            cfg=config, 
+            root=config.pretrain.training.root_dir,
+            split='train',
+            train_ratio=0.8,
+            val_ratio=0.1,
+            test_ratio=0.1,
+            random_seed=config.seed
+        )
+        
+        val_dataset = HumanDataset(
+            cfg=config, 
+            root=config.pretrain.training.root_dir,
+            split='val',
+            train_ratio=0.8,
+            val_ratio=0.1,
+            test_ratio=0.1,
+            random_seed=config.seed
         )
 
         max_ep_len = train_dataset.max_ep_len
-        cprint(f"Dataloader built", color="green", attrs=["bold"])
+        cprint(f"Train dataloader built: {len(train_dataset)} samples", color="green", attrs=["bold"])
+        cprint(f"Val dataloader built: {len(val_dataset)} samples", color="green", attrs=["bold"])
 
         # Create Flow Matching model
         model = FlowMatchingHumanModel(cfg=config, max_ep_len=max_ep_len)
@@ -132,7 +150,7 @@ def main(config: DictConfig):
             save_dir = None
             logger = None
 
-        cprint(f"Flow Matching Model built", color="green", attrs=["bold"])
+        cprint("Flow Matching Model built", color="green", attrs=["bold"])
 
         # Load checkpoint if specified
         if config.pretrain.training.load_checkpoint:
@@ -150,12 +168,17 @@ def main(config: DictConfig):
             )
 
         # Setup optimizer and loss function
-        # TODO: add scheduler
-        scheduler = None
         optimizer = AdamW(
             model.parameters(),
             lr=config.pretrain.training.lr,
             weight_decay=config.pretrain.training.weight_decay,
+        )
+        
+        # Add learning rate scheduler
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, 
+            T_max=config.pretrain.training.num_epochs,
+            eta_min=config.pretrain.training.lr * 0.01  # Minimum LR is 1% of initial LR
         )
         
         # Create Flow Matching trainer
@@ -164,6 +187,20 @@ def main(config: DictConfig):
             optimizer=optimizer,
             device=device
         )
+        
+        # Create validation dataloader
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=config.pretrain.training.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            num_workers=0
+        )
+        
+        # Early stopping setup
+        best_val_loss = float('inf')
+        patience = 10
+        patience_counter = 0
 
         # Video capture setup (if needed)
         if capture_video:
@@ -203,33 +240,151 @@ def main(config: DictConfig):
             for batch_idx, batch in enumerate(train_dataloader):
                 # Move batch to device
                 batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
-                
+               
                 # Train step
                 outputs = trainer.train_step(batch)
                 # Skip None losses (e.g., NaN batches)
                 if outputs.get("loss") is not None and not (isinstance(outputs["loss"], float) and (outputs["loss"] != outputs["loss"])):
                     train_losses.append(outputs["loss"])
+                    
+                    # Log every step to wandb for smooth loss curve
+                    if config.pretrain.wandb_activate:
+                        current_loss = outputs["loss"]
+                        wandb.log({
+                            "train_loss": float(current_loss),
+                            "epoch": i,
+                            "batch": batch_idx
+                        }, commit=False)  # Don't commit yet, wait for epoch end
                 
-                # Logging
+                # Console logging (less frequent)
                 if batch_idx % config.pretrain.training.log_freq == 0:
                     avg_loss = (sum(train_losses) / max(1, len(train_losses))) if len(train_losses) > 0 else float('nan')
                     cprint(f"Epoch {i}, Batch {batch_idx}, Loss: {avg_loss}", color="cyan")
                     
+                    # Log additional metrics to wandb
                     if config.pretrain.wandb_activate:
                         log_dict = {
                             "epoch": i,
                             "batch": batch_idx,
-                            "train_loss": avg_loss,
                         }
-                        for k in ["proprio_error", "velocity_norm", "conditioning_norm", "xt_norm", "x1_norm"]:
-                            val = outputs.get(k)
+                        for metric_name in ["proprio_error", "velocity_norm", "conditioning_norm", "xt_norm", "x1_norm"]:
+                            val = outputs.get(metric_name)
                             if val is not None and not (isinstance(val, float) and (val != val)):
-                                log_dict[k] = val
-                        wandb.log(log_dict, commit=True)
+                                log_dict[str(metric_name)] = float(val)
+                        wandb.log(log_dict, commit=False)  # Don't commit yet
             
             # Epoch summary
             epoch_loss = (sum(train_losses) / max(1, len(train_losses))) if len(train_losses) > 0 else float('nan')
-            cprint(f"Epoch {i} completed. Average Loss: {epoch_loss}", color="green", attrs=["bold"])
+            cprint(f"Epoch {i} completed. Average Train Loss: {epoch_loss}", color="green", attrs=["bold"])
+            
+            # Validation step
+            model.eval()
+            val_losses = []
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(val_dataloader):
+                    # Move batch to device
+                    batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
+                    
+                    # Validation step (same as training but without gradient updates)
+                    proprio = batch["hand_kpts"]
+                    object_pc = batch["object_pc"]
+                    timesteps = batch["timesteps"]
+                    labels = batch["labels"]
+                    attention_mask = batch["attention_mask"]
+                    
+                    # Prepare targets
+                    proprio_target = torch.clone(proprio[:, 1:])
+                    proprio_input = proprio[:, :-1]
+                    object_pc_input = object_pc[:, :-1]
+                    
+                    # Prepare validation data
+                    batch_size = proprio_input.shape[0]
+                    device_val = proprio_input.device
+                    
+                    # Sample time for validation (use uniform sampling)
+                    t = torch.rand(batch_size, 1, device=device_val)
+                    t = t.clamp(1e-4, 1.0 - 1e-4)
+                    
+                    # Prepare targets
+                    kpt_dim = proprio_target.shape[-1]  # Get actual keypoint dimension
+                    x_0 = torch.randn(batch_size, kpt_dim, device=device_val)
+                    x_1 = proprio_target[:, -1]
+                    x_1 = torch.nan_to_num(x_1, nan=0.0, posinf=0.0, neginf=0.0)
+                    
+                    # Linear interpolation
+                    x_t = (1.0 - t) * x_0 + t * x_1
+                    x_t = torch.nan_to_num(x_t, nan=0.0, posinf=0.0, neginf=0.0)
+                    
+                    # Target velocity
+                    target_velocity = x_1 - x_0
+                    
+                    # Get conditioning
+                    proprio_input = torch.nan_to_num(proprio_input, nan=0.0, posinf=0.0, neginf=0.0)
+                    object_pc_input = torch.nan_to_num(object_pc_input, nan=0.0, posinf=0.0, neginf=0.0)
+                    pred_dict, _ = model.forward(
+                        proprio_input,
+                        object_pc_input,
+                        batch["object_ids"],
+                        labels,
+                        timesteps,
+                        attention_mask,
+                        batch["object_mask"],
+                    )
+                    
+                    conditioning = pred_dict["conditioning"]
+                    predicted_velocity = model.flow_net(x_t, conditioning, t)
+                    predicted_velocity = torch.nan_to_num(predicted_velocity, nan=0.0, posinf=0.0, neginf=0.0)
+                    
+                    val_loss = F.mse_loss(predicted_velocity, target_velocity)
+                    if not torch.isnan(val_loss) and not torch.isinf(val_loss):
+                        val_losses.append(val_loss.item())
+            
+            # Calculate average validation loss
+            avg_val_loss = (sum(val_losses) / max(1, len(val_losses))) if len(val_losses) > 0 else float('nan')
+            cprint(f"Epoch {i} Validation Loss: {avg_val_loss}", color="yellow", attrs=["bold"])
+            
+            # Early stopping check
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                patience_counter = 0
+                # Save best model
+                if experiment_folder:
+                    best_model_path = os.path.join(experiment_folder, "best_flow_matching_model.pt")
+                    torch.save(model.state_dict(), best_model_path)
+                    cprint(f"New best model saved to {best_model_path}", color="green")
+            else:
+                patience_counter += 1
+                cprint(f"Validation loss did not improve. Patience: {patience_counter}/{patience}", color="red")
+            
+            # Check for early stopping
+            if patience_counter >= patience:
+                cprint(f"Early stopping triggered after {i+1} epochs", color="red", attrs=["bold"])
+                break
+            
+            # Update learning rate
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]['lr']
+            
+            # Log to wandb and local logger
+            log_dict = {
+                "epoch": i,
+                "train_loss": epoch_loss,
+                "val_loss": avg_val_loss,
+                "best_val_loss": best_val_loss,
+                "patience_counter": patience_counter,
+                "learning_rate": current_lr
+            }
+            
+            if config.pretrain.wandb_activate:
+                wandb.log(log_dict, commit=True)  # Commit all pending logs including step-by-step losses
+            
+            # Log to local logger if available
+            if logger is not None:
+                logger.log_scalar("train_loss", epoch_loss, i)
+                logger.log_scalar("val_loss", avg_val_loss, i)
+                logger.log_scalar("best_val_loss", best_val_loss, i)
+                logger.log_scalar("patience_counter", patience_counter, i)
+                logger.log_scalar("learning_rate", current_lr, i)
             
             # Save model checkpoint
             if experiment_folder and (i + 1) % config.pretrain.training.model_save_freq == 0:
@@ -239,10 +394,10 @@ def main(config: DictConfig):
 
             # Video capture (if enabled)
             if capture_video and (i + 1) % 10 == 0:  # Capture every 10 epochs
-                fps = int(
-                    1 / (config.task.sim.dt * config.task.env.controlFrequencyInv)
-                )
-                print(f"Capturing video from simulation")
+                # fps = int(
+                #     1 / (config.task.sim.dt * config.task.env.controlFrequencyInv)
+                # )
+                print("Capturing video from simulation")
                 env.start_video_recording()
                 
                 # Note: Need to implement run_multi_env for FlowMatchingHumanModel

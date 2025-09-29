@@ -116,25 +116,17 @@ class FlowMatchingHumanModel(nn.Module):
         conditioning = context_features.mean(dim=1)  # (batch_size, hidden_size)
         # or use the last time step: conditioning = context_features[:, -1] ?
         
-        # In training, only return conditioning information, no prediction
+        # Always return conditioning information for both training and validation
         # In inference, use Flow Matching to generate predictions
-        if self.training:
-            pred_dict = {"conditioning": conditioning}
-        else:
-            # 推理时使用FM采样（状态依赖速度场积分）
+        pred_dict = {"conditioning": conditioning}
+        
+        # Only add prediction in actual inference mode (not validation)
+        if not self.training and hasattr(self, '_inference_mode') and self._inference_mode:
             next_kpt_preds = self.flow_net.sample(conditioning, num_steps=self.num_inference_steps)
-            pred_dict = {"next_proprio": next_kpt_preds}
+            pred_dict["next_proprio"] = next_kpt_preds
         
         return pred_dict, pc_embeddings
     
-    def sample_trajectory(self, conditioning, num_steps=None):
-        """
-        Sample a trajectory using Flow Matching
-        """
-        if num_steps is None:
-            num_steps = self.num_inference_steps
-        return self.flow_net.sample(conditioning, num_steps)
-
 
 class FlowMatchingNetwork(nn.Module):
     """
@@ -391,9 +383,10 @@ class FlowMatchingTrainer:
         t = t.clamp(1e-4, 1.0 - 1e-4)
         
         # 准备目标：从噪声到真实手部关键点的流
-        # x_0: 噪声 (batch_size, 15)
-        x_0 = torch.randn(batch_size, 15, device=device)
-        # x_1: 真实的下一个手部关键点 (batch_size, 15)
+        # x_0: 噪声 (batch_size, kpt_dim)
+        kpt_dim = proprio_target.shape[-1]  # Get actual keypoint dimension
+        x_0 = torch.randn(batch_size, kpt_dim, device=device)
+        # x_1: 真实的下一个手部关键点 (batch_size, kpt_dim)
         x_1 = proprio_target[:, -1]
         # Remove explicit clamping, keep NaN/Inf sanitization only
         x_1 = torch.nan_to_num(x_1, nan=0.0, posinf=0.0, neginf=0.0)

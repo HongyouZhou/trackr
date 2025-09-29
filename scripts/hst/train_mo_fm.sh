@@ -31,7 +31,7 @@ run_experiment() {
         pretrain.model.context_length=$CL \
         pretrain.model.all_fingers=True \
         pretrain.training.batch_size=64 \
-        pretrain.training.lr=0.0001 \
+        pretrain.training.lr=0.00001 \
         pretrain.training.weight_decay=0.01 \
         pretrain.training.num_epochs=2000 \
         pretrain.model.hidden_dim=$HIDDEN_DIM \
